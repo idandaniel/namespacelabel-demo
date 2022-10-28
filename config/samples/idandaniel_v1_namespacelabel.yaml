@@ -1,0 +1,12 @@
+apiVersion: idandaniel.idandaniel.io/v1
+kind: NamespaceLabel
+metadata:
+  labels:
+    app.kubernetes.io/name: namespacelabel
+    app.kubernetes.io/instance: namespacelabel-sample
+    app.kubernetes.io/part-of: namespacelabel-demo
+    app.kuberentes.io/managed-by: kustomize
+    app.kubernetes.io/created-by: namespacelabel-demo
+  name: namespacelabel-sample
+spec:
+  # TODO(user): Add fields here

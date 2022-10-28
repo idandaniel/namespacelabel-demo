@@ -1,0 +1,16 @@
+domain: idandaniel.io
+layout:
+- go.kubebuilder.io/v3
+projectName: namespacelabel-demo
+repo: idandaniel.io/namespacelabel-demo
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: idandaniel.io
+  group: idandaniel
+  kind: NamespaceLabel
+  path: idandaniel.io/namespacelabel-demo/api/v1
+  version: v1
+version: "3"
