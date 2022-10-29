@@ -29,7 +29,7 @@ type NamespaceLabelSpec struct {
 	// Important: Run "make" to regenerate code after modifying this file
 
 	// Foo is an example field of NamespaceLabel. Edit namespacelabel_types.go to remove/update
-	Foo string `json:"foo,omitempty"`
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 // NamespaceLabelStatus defines the observed state of NamespaceLabel
