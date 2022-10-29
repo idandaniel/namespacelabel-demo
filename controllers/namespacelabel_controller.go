@@ -19,10 +19,12 @@ package controllers
 import (
 	"context"
 
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	idandanielv1 "idandaniel.io/namespacelabel-demo/api/v1"
 )
@@ -49,7 +51,19 @@ type NamespaceLabelReconciler struct {
 func (r *NamespaceLabelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	_ = log.FromContext(ctx)
 
-	// TODO(user): your logic here
+	logger := ctrl.Log.WithName("setup")
+
+	namespaceLabel := &idandanielv1.NamespaceLabel{}
+	err := r.Get(ctx, req.NamespacedName, namespaceLabel)
+
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return reconcile.Result{}, nil
+		}
+		return ctrl.Result{}, err
+	}
+
+	logger.Info(namespaceLabel.Name)
 
 	return ctrl.Result{}, nil
 }
