@@ -20,7 +20,9 @@ import (
 	"context"
 
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -64,6 +66,24 @@ func (r *NamespaceLabelReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	logger.Info(namespaceLabel.Name)
+
+	clientSet := kubernetes.NewForConfigOrDie(ctrl.GetConfigOrDie())
+	namespace, err := clientSet.CoreV1().Namespaces().Get(ctx, namespaceLabel.Namespace, metav1.GetOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			err := r.Delete(ctx, namespaceLabel)
+			if err != nil {
+				logger.Info("Failed to delete NamespaceLabel " + namespaceLabel.Name)
+			}
+			logger.Info("Deleted NamespaceLabel " + namespaceLabel.Name)
+		}
+		return reconcile.Result{}, err
+	}
+
+	logger.Info(namespace.Name)
+	for labelKey, labelValue := range namespace.Labels {
+		logger.Info(labelKey + " ===> " + labelValue)
+	}
 
 	return ctrl.Result{}, nil
 }
