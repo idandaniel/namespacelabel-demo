@@ -18,7 +18,10 @@ package controllers
 
 import (
 	"context"
+	"strings"
 
+	"golang.org/x/exp/maps"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -53,7 +56,7 @@ type NamespaceLabelReconciler struct {
 func (r *NamespaceLabelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	_ = log.FromContext(ctx)
 
-	logger := ctrl.Log.WithName("setup")
+	logger := ctrl.Log.WithName("reconcile")
 
 	namespaceLabel := &idandanielv1.NamespaceLabel{}
 	err := r.Get(ctx, req.NamespacedName, namespaceLabel)
@@ -65,25 +68,39 @@ func (r *NamespaceLabelReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, err
 	}
 
-	logger.Info(namespaceLabel.Name)
-
 	clientSet := kubernetes.NewForConfigOrDie(ctrl.GetConfigOrDie())
-	namespace, err := clientSet.CoreV1().Namespaces().Get(ctx, namespaceLabel.Namespace, metav1.GetOptions{})
+	NamespaceGetter := clientSet.CoreV1().Namespaces
+
+	namespace, err := NamespaceGetter().Get(ctx, namespaceLabel.Namespace, metav1.GetOptions{})
+
 	if err != nil {
 		if errors.IsNotFound(err) {
 			err := r.Delete(ctx, namespaceLabel)
 			if err != nil {
 				logger.Info("Failed to delete NamespaceLabel " + namespaceLabel.Name)
+				return reconcile.Result{}, err
 			}
 			logger.Info("Deleted NamespaceLabel " + namespaceLabel.Name)
 		}
 		return reconcile.Result{}, err
 	}
 
-	logger.Info(namespace.Name)
+	newLabels := getNamespaceProtectedLabels(namespace)
+	maps.Copy(newLabels, namespaceLabel.Spec.Labels)
+	namespace.Labels = newLabels
+
+	namespace, err = NamespaceGetter().Update(ctx, namespace, metav1.UpdateOptions{})
+
+	if err != nil {
+		logger.Info("Failed to update namespace")
+		return reconcile.Result{}, err
+	}
+
+	logger.Info(namespaceLabel.Name)
 	for labelKey, labelValue := range namespace.Labels {
 		logger.Info(labelKey + " ===> " + labelValue)
 	}
+	logger.Info("-----------------")
 
 	return ctrl.Result{}, nil
 }
@@ -93,4 +110,16 @@ func (r *NamespaceLabelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&idandanielv1.NamespaceLabel{}).
 		Complete(r)
+}
+
+func getNamespaceProtectedLabels(namespace *v1.Namespace) map[string]string {
+	protectedLabels := make(map[string]string)
+
+	for labelKey, labelValue := range namespace.Labels {
+		if strings.Contains(labelKey, "kubernetes.io") {
+			protectedLabels[labelKey] = labelValue
+		}
+	}
+
+	return protectedLabels
 }
