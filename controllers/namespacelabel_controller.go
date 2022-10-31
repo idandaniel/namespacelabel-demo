@@ -18,90 +18,181 @@ package controllers
 
 import (
 	"context"
-	"strings"
 
-	"golang.org/x/exp/maps"
-	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	idandanielv1 "idandaniel.io/namespacelabel-demo/api/v1"
+	"idandaniel.io/namespacelabel-demo/common/wrappers"
 )
 
-// NamespaceLabelReconciler reconciles a NamespaceLabel object
 type NamespaceLabelReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 }
 
+const (
+	finalizer       string = "idandaniel.idandaniel.io/finalizer"
+	AddFinalizer    string = "ADD"
+	RemoveFinalizer string = "REMOVE"
+)
+
 //+kubebuilder:rbac:groups=idandaniel.idandaniel.io,resources=namespacelabels,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=idandaniel.idandaniel.io,resources=namespacelabels/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=idandaniel.idandaniel.io,resources=namespacelabels/finalizers,verbs=update
 
-// Reconcile is part of the main kubernetes reconciliation loop which aims to
-// move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the NamespaceLabel object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.13.0/pkg/reconcile
+// Handles removing safely NamespaceLabels labels from the associated Namespace labels when being deleted.
+func (r *NamespaceLabelReconciler) removeLabelsFromAssociatedNamespace(ctx context.Context, namespaceLabel *idandanielv1.NamespaceLabel) error {
+	labelsToRemove := namespaceLabel.Spec.Labels
+	clientSet := kubernetes.NewForConfigOrDie(ctrl.GetConfigOrDie())
+
+	// Get all NamespaceLabels and pop the one being deleted
+	allInNamespace := &idandanielv1.NamespaceLabelList{}
+	err := r.List(ctx, allInNamespace, &client.ListOptions{Namespace: namespaceLabel.Namespace})
+	if client.IgnoreNotFound(err) != nil {
+		return err
+	}
+
+	// Get all the NamespaceLabels in Namespace except the one being deleted
+	var allOtherNamespaceLabels = idandanielv1.NamespaceLabelList{}
+	for _, nl := range allInNamespace.Items {
+		if nl.Name == namespaceLabel.Name {
+			continue
+		}
+		allOtherNamespaceLabels.Items = append(allOtherNamespaceLabels.Items, nl)
+	}
+	allOtherLabels := allOtherNamespaceLabels.GetLables()
+
+	// Get the namespace to remove labels from
+	namespace, err := clientSet.CoreV1().Namespaces().Get(ctx, namespaceLabel.Namespace, metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+
+	// Loop through labels and removes the unique ones
+	for keyToRemove, desiredValue := range labelsToRemove {
+		_, isKeyExists := allOtherLabels[keyToRemove]
+		if isKeyExists && desiredValue == namespace.Labels[keyToRemove] {
+			continue
+		}
+
+		if desiredValue == namespace.Labels[keyToRemove] {
+			delete(namespace.Labels, keyToRemove)
+		}
+	}
+
+	// Update the Namespace
+	if _, err = clientSet.CoreV1().Namespaces().Update(ctx, namespace, metav1.UpdateOptions{}); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// Generic function for either add or remove NamespaceLabel finalizer
+func (r *NamespaceLabelReconciler) changeFinalizer(ctx context.Context, namespaceLabel *idandanielv1.NamespaceLabel, finalizer string, method string) error {
+	changeMethods := map[string]interface{}{
+		AddFinalizer:    controllerutil.AddFinalizer,
+		RemoveFinalizer: controllerutil.RemoveFinalizer,
+	}
+
+	_ = changeMethods[method].(func(client.Object, string) bool)(namespaceLabel, finalizer)
+
+	if err := r.Update(ctx, namespaceLabel); err != nil {
+		return err
+	}
+
+	return nil
+
+}
+
+// Add finalizer to NamespaceLabel if ir doesn't have one
+func (r *NamespaceLabelReconciler) addFinalizer(ctx context.Context, namespaceLabel *idandanielv1.NamespaceLabel, finalizer string) error {
+	if !controllerutil.ContainsFinalizer(namespaceLabel, finalizer) {
+		if err := r.changeFinalizer(ctx, namespaceLabel, finalizer, AddFinalizer); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// Handle NamespaceLabel deletion - clear the matching labels in Namespace
+func (r *NamespaceLabelReconciler) handleDeletion(ctx context.Context, namespaceLabel *idandanielv1.NamespaceLabel, finalizer string) error {
+
+	if controllerutil.ContainsFinalizer(namespaceLabel, finalizer) {
+		if err := r.removeLabelsFromAssociatedNamespace(ctx, namespaceLabel); err != nil {
+			return err
+		}
+
+		if err := r.changeFinalizer(ctx, namespaceLabel, finalizer, RemoveFinalizer); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// Main function of syncing Between NamespaceLabels to the actual associated Namespace labels
+func (r *NamespaceLabelReconciler) sync(ctx context.Context, namespace string) error {
+
+	// Get all the NamespaceLabels of the current request Namespace and retrieve their labels
+	namespaceLabelList := &idandanielv1.NamespaceLabelList{}
+	if err := r.List(ctx, namespaceLabelList, &client.ListOptions{Namespace: namespace}); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	labelsToAdd := namespaceLabelList.GetLables()
+
+	// Get the Namespace
+	clientSet := kubernetes.NewForConfigOrDie(ctrl.GetConfigOrDie())
+	n, err := clientSet.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
+	if err != nil {
+		return client.IgnoreNotFound(err)
+	}
+
+	// Update the Namespace labels safely (keeps the kubernetes managment tags)
+	wrappedNamespace := &wrappers.NamespaceWrapper{Namespace: n}
+	wrappedNamespace.UpdateLabels(true, labelsToAdd)
+	_, err = clientSet.CoreV1().Namespaces().Update(ctx, wrappedNamespace.Namespace, metav1.UpdateOptions{})
+	if err != nil {
+		return client.IgnoreNotFound(err)
+	}
+
+	return nil
+}
+
+// Main reconcile loop
 func (r *NamespaceLabelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	_ = log.FromContext(ctx)
 
-	logger := ctrl.Log.WithName("reconcile")
-
+	// Get the associated Namespace
 	namespaceLabel := &idandanielv1.NamespaceLabel{}
-	err := r.Get(ctx, req.NamespacedName, namespaceLabel)
+	if err := r.Get(ctx, req.NamespacedName, namespaceLabel, &client.GetOptions{}); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
 
-	if err != nil {
-		if errors.IsNotFound(err) {
-			return reconcile.Result{}, nil
+	// Handle finalizer
+	if !namespaceLabel.IsBeingDeleted() {
+		if err := r.addFinalizer(ctx, namespaceLabel, finalizer); err != nil {
+			return ctrl.Result{}, err
 		}
+
+	} else {
+		if err := r.handleDeletion(ctx, namespaceLabel, finalizer); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
+	}
+
+	// Sync between NamespaceLabel CR to Namespace labels
+	if err := r.sync(ctx, req.NamespacedName.Namespace); err != nil {
 		return ctrl.Result{}, err
 	}
-
-	clientSet := kubernetes.NewForConfigOrDie(ctrl.GetConfigOrDie())
-	NamespaceGetter := clientSet.CoreV1().Namespaces
-
-	namespace, err := NamespaceGetter().Get(ctx, namespaceLabel.Namespace, metav1.GetOptions{})
-
-	if err != nil {
-		if errors.IsNotFound(err) {
-			err := r.Delete(ctx, namespaceLabel)
-			if err != nil {
-				logger.Info("Failed to delete NamespaceLabel " + namespaceLabel.Name)
-				return reconcile.Result{}, err
-			}
-			logger.Info("Deleted NamespaceLabel " + namespaceLabel.Name)
-		}
-		return reconcile.Result{}, err
-	}
-
-	newLabels := getNamespaceProtectedLabels(namespace)
-	maps.Copy(newLabels, namespaceLabel.Spec.Labels)
-	namespace.Labels = newLabels
-
-	namespace, err = NamespaceGetter().Update(ctx, namespace, metav1.UpdateOptions{})
-
-	if err != nil {
-		logger.Info("Failed to update namespace")
-		return reconcile.Result{}, err
-	}
-
-	logger.Info(namespaceLabel.Name)
-	for labelKey, labelValue := range namespace.Labels {
-		logger.Info(labelKey + " ===> " + labelValue)
-	}
-	logger.Info("-----------------")
-
 	return ctrl.Result{}, nil
 }
 
@@ -110,16 +201,4 @@ func (r *NamespaceLabelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&idandanielv1.NamespaceLabel{}).
 		Complete(r)
-}
-
-func getNamespaceProtectedLabels(namespace *v1.Namespace) map[string]string {
-	protectedLabels := make(map[string]string)
-
-	for labelKey, labelValue := range namespace.Labels {
-		if strings.Contains(labelKey, "kubernetes.io") {
-			protectedLabels[labelKey] = labelValue
-		}
-	}
-
-	return protectedLabels
 }
