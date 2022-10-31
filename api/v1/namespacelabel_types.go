@@ -17,6 +17,7 @@ limitations under the License.
 package v1
 
 import (
+	"golang.org/x/exp/maps"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -50,6 +51,10 @@ type NamespaceLabel struct {
 	Status NamespaceLabelStatus `json:"status,omitempty"`
 }
 
+func (nl *NamespaceLabel) IsBeingDeleted() bool {
+	return !nl.ObjectMeta.DeletionTimestamp.IsZero()
+}
+
 //+kubebuilder:object:root=true
 
 // NamespaceLabelList contains a list of NamespaceLabel
@@ -57,6 +62,16 @@ type NamespaceLabelList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []NamespaceLabel `json:"items"`
+}
+
+func (nls *NamespaceLabelList) GetLables() map[string]string {
+	labelsToAdd := make(map[string]string)
+
+	for _, item := range nls.Items {
+		maps.Copy(labelsToAdd, item.Spec.Labels)
+	}
+
+	return labelsToAdd
 }
 
 func init() {
