@@ -33,3 +33,19 @@ func (n *NamespaceWrapper) UpdateLabels(safe bool, newLabels map[string]string) 
 	maps.Copy(managementLabels, newLabels)
 	n.Labels = managementLabels
 }
+
+func (n *NamespaceWrapper) RemoveLabel(key string, value string) {
+	if value == n.Labels[key] {
+		delete(n.Labels, key)
+	}
+}
+
+func (n *NamespaceWrapper) RemoveLabelsExcept(labelsToRemove map[string]string, labelsToIgnore map[string]string) {
+	for key, value := range labelsToRemove {
+		_, isKeyExists := labelsToIgnore[key]
+		if isKeyExists && value == n.Labels[key] {
+			continue
+		}
+		n.RemoveLabel(key, value)
+	}
+}

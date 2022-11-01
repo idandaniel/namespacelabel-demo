@@ -51,22 +51,15 @@ func (r *NamespaceLabelReconciler) removeLabelsFromAssociatedNamespace(ctx conte
 	labelsToRemove := namespaceLabel.Spec.Labels
 	clientSet := kubernetes.NewForConfigOrDie(ctrl.GetConfigOrDie())
 
-	// Get all NamespaceLabels and pop the one being deleted
+	// Get all NamespaceLabels in the namespace
 	allInNamespace := &idandanielv1.NamespaceLabelList{}
 	err := r.List(ctx, allInNamespace, &client.ListOptions{Namespace: namespaceLabel.Namespace})
 	if client.IgnoreNotFound(err) != nil {
 		return err
 	}
 
-	// Get all the NamespaceLabels in Namespace except the one being deleted
-	var allOtherNamespaceLabels = idandanielv1.NamespaceLabelList{}
-	for _, nl := range allInNamespace.Items {
-		if nl.Name == namespaceLabel.Name {
-			continue
-		}
-		allOtherNamespaceLabels.Items = append(allOtherNamespaceLabels.Items, nl)
-	}
-	allOtherLabels := allOtherNamespaceLabels.GetLables()
+	// Get all the NamespaceLabels Labels in Namespace except the one being deleted
+	labelToIgnore := allInNamespace.GetLabelsExcept(namespaceLabel)
 
 	// Get the namespace to remove labels from
 	namespace, err := clientSet.CoreV1().Namespaces().Get(ctx, namespaceLabel.Namespace, metav1.GetOptions{})
@@ -74,20 +67,10 @@ func (r *NamespaceLabelReconciler) removeLabelsFromAssociatedNamespace(ctx conte
 		return err
 	}
 
-	// Loop through labels and removes the unique ones
-	for keyToRemove, desiredValue := range labelsToRemove {
-		_, isKeyExists := allOtherLabels[keyToRemove]
-		if isKeyExists && desiredValue == namespace.Labels[keyToRemove] {
-			continue
-		}
-
-		if desiredValue == namespace.Labels[keyToRemove] {
-			delete(namespace.Labels, keyToRemove)
-		}
-	}
-
 	// Update the Namespace
-	if _, err = clientSet.CoreV1().Namespaces().Update(ctx, namespace, metav1.UpdateOptions{}); err != nil {
+	wrappedNamespace := &wrappers.NamespaceWrapper{Namespace: namespace}
+	wrappedNamespace.RemoveLabelsExcept(labelsToRemove, labelToIgnore)
+	if _, err = clientSet.CoreV1().Namespaces().Update(ctx, wrappedNamespace.Namespace, metav1.UpdateOptions{}); err != nil {
 		return err
 	}
 
@@ -146,7 +129,7 @@ func (r *NamespaceLabelReconciler) sync(ctx context.Context, namespace string) e
 	if err := r.List(ctx, namespaceLabelList, &client.ListOptions{Namespace: namespace}); err != nil {
 		return client.IgnoreNotFound(err)
 	}
-	labelsToAdd := namespaceLabelList.GetLables()
+	labelsToAdd := namespaceLabelList.GetLabels()
 
 	// Get the Namespace
 	clientSet := kubernetes.NewForConfigOrDie(ctrl.GetConfigOrDie())

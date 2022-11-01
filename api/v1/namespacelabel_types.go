@@ -64,7 +64,7 @@ type NamespaceLabelList struct {
 	Items           []NamespaceLabel `json:"items"`
 }
 
-func (nls *NamespaceLabelList) GetLables() map[string]string {
+func (nls *NamespaceLabelList) GetLabels() map[string]string {
 	labelsToAdd := make(map[string]string)
 
 	for _, item := range nls.Items {
@@ -72,6 +72,17 @@ func (nls *NamespaceLabelList) GetLables() map[string]string {
 	}
 
 	return labelsToAdd
+}
+
+func (nls *NamespaceLabelList) GetLabelsExcept(nlToIgnore *NamespaceLabel) map[string]string {
+	var namespaceLabels = NamespaceLabelList{}
+	for _, nl := range nls.Items {
+		if nl.Name == nlToIgnore.Name {
+			continue
+		}
+		namespaceLabels.Items = append(namespaceLabels.Items, nl)
+	}
+	return namespaceLabels.GetLabels()
 }
 
 func init() {
