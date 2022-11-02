@@ -1,0 +1,33 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  creationTimestamp: null
+  name: manager-role
+rules:
+- apiGroups:
+  - idandaniel.idandaniel.io
+  resources:
+  - namespacelabels
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - idandaniel.idandaniel.io
+  resources:
+  - namespacelabels/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - idandaniel.idandaniel.io
+  resources:
+  - namespacelabels/status
+  verbs:
+  - get
+  - patch
+  - update
