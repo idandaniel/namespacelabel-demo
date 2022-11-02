@@ -16,14 +16,14 @@ var _ = Describe("NamespaceLabel controller", func() {
 	// Define utility constants for object names and testing timeouts/durations and intervals.
 	const (
 		NamespaceLabelName      = "test-namespacelabel"
-		NamespaceLabelNamespace = "test-namespace"
+		NamespaceLabelNamespace = "default"
 
 		timeout  = time.Second * 10
 		duration = time.Second * 10
 		interval = time.Millisecond * 250
 	)
 
-	Context("When creating NamespaceLabel Labels", func() {
+	Context("When creating NamespaceLabel Label", func() {
 		It("Should sync the Labels with the Namespace Labels.", func() {
 			By("Creating new NamespaceLabel")
 			ctx := context.Background()
@@ -42,18 +42,13 @@ var _ = Describe("NamespaceLabel controller", func() {
 					},
 				},
 			}
-			// Ensure creation succeeded
 			Expect(k8sClient.Create(ctx, namespaceLabel)).Should(Succeed())
-			// Ensure object created
 			namespaceLabelLookupKey := types.NamespacedName{Name: NamespaceLabelName, Namespace: NamespaceLabelNamespace}
 			createdNamespaceLabel := &idandanielv1.NamespaceLabel{}
-			// Retry because object creation may not immediately happen
 			Eventually(func() bool {
 				err := k8sClient.Get(ctx, namespaceLabelLookupKey, createdNamespaceLabel)
-				return err != nil
+				return err == nil
 			}, timeout, interval).Should(BeTrue())
-			By("By adding the NamespaceLabel Labels and keep the mamagement labels")
-
 		})
 	})
 
