@@ -131,9 +131,11 @@ func (r *NamespaceLabelReconciler) sync(ctx context.Context, namespace string) e
 	}
 	labelsToAdd := namespaceLabelList.GetLabels()
 
-	// Get the Namespace
 	clientSet := kubernetes.NewForConfigOrDie(ctrl.GetConfigOrDie())
-	n, err := clientSet.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
+	NamespaceInterface := clientSet.CoreV1().Namespaces()
+
+	// Get the Namespace
+	n, err := NamespaceInterface.Get(ctx, namespace, metav1.GetOptions{})
 	if err != nil {
 		return client.IgnoreNotFound(err)
 	}
@@ -141,7 +143,7 @@ func (r *NamespaceLabelReconciler) sync(ctx context.Context, namespace string) e
 	// Update the Namespace labels safely (keeps the kubernetes managment tags)
 	wrappedNamespace := &wrappers.NamespaceWrapper{Namespace: n}
 	wrappedNamespace.UpdateLabels(true, labelsToAdd)
-	_, err = clientSet.CoreV1().Namespaces().Update(ctx, wrappedNamespace.Namespace, metav1.UpdateOptions{})
+	_, err = NamespaceInterface.Update(ctx, wrappedNamespace.Namespace, metav1.UpdateOptions{})
 	if err != nil {
 		return client.IgnoreNotFound(err)
 	}
