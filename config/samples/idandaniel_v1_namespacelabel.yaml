@@ -9,4 +9,5 @@ metadata:
     app.kubernetes.io/created-by: namespacelabel-demo
   name: namespacelabel-sample
 spec:
-  # TODO(user): Add fields here
+  labels:
+    key_1: value_1
