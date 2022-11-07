@@ -1,126 +1,211 @@
 package controllers
 
 import (
-	"context"
-	"math/rand"
-	"time"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	idandanielv1 "idandaniel.io/namespacelabel-demo/api/v1"
+	"idandaniel.io/namespacelabel-demo/common/wrappers"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-func createNamespace(ctx context.Context, name string, labels map[string]string) {
+var _ = Describe("NamespaceLabel Controller", func() {
+
+	const (
+		NamespaceLabelName = "test-namepsacelabel"
+
+		ManagementKey = "app.kubernetes.io/name"
+	)
+
+	prevLabels := map[string]string{
+		ManagementKey: NamespaceLabelName,
+	}
 	namespace := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:   name,
-			Labels: labels,
+			Name:   NamespaceLabelName,
+			Labels: prevLabels,
 		},
 	}
-	Expect(k8sClient.Create(ctx, namespace)).NotTo(HaveOccurred())
-}
+	wrappedNamespace := &wrappers.NamespaceWrapper{Namespace: namespace}
 
-func ensureLabelsExists(ctx context.Context, namespace string, labels map[string]string) {
-	Eventually(func() bool {
-		logf.Log.Info("Ensurng labels")
-		changedNamespace := &corev1.Namespace{}
-		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: namespace}, changedNamespace)).To(Not(HaveOccurred()))
+	Context("With one new NamespaceLabel", func() {
 
-		currentLabels := changedNamespace.GetLabels()
+		const NewLabelData = "NewLabel"
 
-		for k, v := range labels {
-			logf.Log.Info(k + " ---> " + v + ": [ " + currentLabels[k] + " ]")
-			val, exists := currentLabels[k]
-			if !exists || (exists && val != v) {
-				return false
-			}
+		newLabels := map[string]string{
+			NewLabelData: NewLabelData,
 		}
 
-		return true
-	}, time.Second*10, time.Millisecond*250).Should(BeTrue())
-}
+		namespaceLabel := &idandanielv1.NamespaceLabel{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      NamespaceLabelName,
+				Namespace: namespace.Name,
+			},
+			Spec: idandanielv1.NamespaceLabelSpec{
+				Labels: newLabels,
+			},
+		}
 
-var _ = Describe("NamespaceLabel controller test", func() {
+		It("Should safely append new Labels", func() {
+			wrappedNamespace.UpdateLabels(true, namespaceLabel.Spec.Labels)
 
-	NamespaceLabelName := "test-nl"
-	Namespace := RandStringRunes(12)
-
-	ctx := context.Background()
-
-	managementLabels := map[string]string{
-		"app.kubernetes.io/name": NamespaceLabelName,
-	}
-
-	namespaceLabelLookupKey := types.NamespacedName{Name: NamespaceLabelName, Namespace: Namespace}
-
-	BeforeEach(func() {
-		createNamespace(ctx, Namespace, managementLabels)
-		k8sClient.DeleteAllOf(ctx, &idandanielv1.NamespaceLabel{})
+			Expect(wrappedNamespace.Namespace.Labels).Should(Equal(
+				map[string]string{
+					ManagementKey: NamespaceLabelName,
+					NewLabelData:  NewLabelData,
+				},
+			))
+		})
 	})
 
-	AfterEach(func() {
-		namespace := &corev1.Namespace{}
-		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: Namespace}, namespace)).ToNot(HaveOccurred())
-		Expect(k8sClient.Delete(ctx, namespace)).NotTo(HaveOccurred())
-		k8sClient.DeleteAllOf(ctx, &idandanielv1.NamespaceLabel{})
+	Context("With multiple new NamespaceLabels", func() {
+
+		exampleNamespaceLabel1 := &idandanielv1.NamespaceLabel{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "NewNamespaceLabel2",
+				Namespace: namespace.Name,
+			},
+			Spec: idandanielv1.NamespaceLabelSpec{
+				Labels: map[string]string{
+					"ExampleLabel1": "ExampleLabel1",
+				},
+			},
+		}
+		exampleNamespaceLabel2 := &idandanielv1.NamespaceLabel{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "NewNamespaceLabel1",
+				Namespace: namespace.Name,
+			},
+			Spec: idandanielv1.NamespaceLabelSpec{
+				Labels: map[string]string{
+					"ExampleLabel2": "ExampleLabel2",
+				},
+			},
+		}
+
+		newNamespaceLabels := &idandanielv1.NamespaceLabelList{
+			Items: []idandanielv1.NamespaceLabel{
+				*exampleNamespaceLabel1,
+				*exampleNamespaceLabel2,
+			},
+		}
+
+		It("Should safely append new Labels", func() {
+			wrappedNamespace.UpdateLabels(true, newNamespaceLabels.GetLabels())
+
+			expectedLabels := make(map[string]string)
+			for k, v := range exampleNamespaceLabel1.Spec.Labels {
+				expectedLabels[k] = v
+			}
+			for k, v := range exampleNamespaceLabel2.Spec.Labels {
+				expectedLabels[k] = v
+			}
+			expectedLabels[ManagementKey] = NamespaceLabelName
+
+			Expect(wrappedNamespace.Namespace.Labels).Should(Equal(expectedLabels))
+		})
 	})
 
-	Context("When creating NamespaceLabel Label", func() {
-		It("Should sync the Labels with the Namespace Labels.", func() {
+	Context("With delete NamespaceLabel", func() {
 
-			By("Creating the custom resource for the Kind NamespaceLabel")
-			newLabels := map[string]string{
-				"key_1": "value_1",
-			}
-			namespaceLabel := &idandanielv1.NamespaceLabel{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      NamespaceLabelName,
-					Namespace: Namespace,
+		const (
+			Keep   = "KEEP"
+			Remove = "REMOVE"
+		)
+
+		labelsToKeep := map[string]string{
+			Keep: Keep,
+		}
+
+		labelsToRemove := map[string]string{
+			Remove: Remove,
+		}
+
+		namespaceLabelToKeep := &idandanielv1.NamespaceLabel{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "NamepsaceLabelToKeep",
+				Namespace: namespace.Name,
+			},
+			Spec: idandanielv1.NamespaceLabelSpec{
+				Labels: labelsToKeep,
+			},
+		}
+
+		namespaceLabelToRemove := &idandanielv1.NamespaceLabel{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "NamepsaceLabelToRemove",
+				Namespace: namespace.Name,
+			},
+			Spec: idandanielv1.NamespaceLabelSpec{
+				Labels: labelsToRemove,
+			},
+		}
+
+		allNamespaceLabelsInNamespace := &idandanielv1.NamespaceLabelList{
+			Items: []idandanielv1.NamespaceLabel{
+				*namespaceLabelToKeep,
+				*namespaceLabelToRemove,
+			},
+		}
+
+		allLabelsToKeep := allNamespaceLabelsInNamespace.GetLabelsExcept(namespaceLabelToRemove)
+
+		namespace := &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: NamespaceLabelName,
+				Labels: map[string]string{
+					ManagementKey: NamespaceLabelName,
+					Remove:        Remove,
+					Keep:          Keep,
 				},
-				Spec: idandanielv1.NamespaceLabelSpec{
-					Labels: newLabels,
+			},
+		}
+		wrappedNamespace := &wrappers.NamespaceWrapper{Namespace: namespace}
+
+		It("Should safely remove Labels", func() {
+			wrappedNamespace.RemoveLabelsExcept(
+				namespaceLabelToRemove.Spec.Labels,
+				allLabelsToKeep,
+			)
+
+			expectedLabels := map[string]string{
+				ManagementKey: NamespaceLabelName,
+				Keep:          Keep,
+			}
+
+			Expect(wrappedNamespace.Labels).Should(Equal(expectedLabels))
+		})
+	})
+
+	Context("With update NamespaceLabel", func() {
+		const (
+			Old = "OLD"
+			New = "NEW"
+		)
+
+		namespace := &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: NamespaceLabelName,
+				Labels: map[string]string{
+					ManagementKey: NamespaceLabelName,
+					Old:           Old,
 				},
+			},
+		}
+		wrappedNamespace := &wrappers.NamespaceWrapper{Namespace: namespace}
+
+		It("Should safely update Labels", func() {
+			wrappedNamespace.UpdateLabels(
+				true,
+				map[string]string{New: New},
+			)
+
+			expectedLabels := map[string]string{
+				ManagementKey: NamespaceLabelName,
+				New:           New,
 			}
-			Expect(k8sClient.Create(ctx, namespaceLabel)).To(Not(HaveOccurred()))
 
-			By("Checking if the custom resource was successfully created")
-			Eventually(func() error {
-				found := &idandanielv1.NamespaceLabel{}
-				return k8sClient.Get(ctx, namespaceLabelLookupKey, found)
-			}, time.Minute, time.Second).Should(Succeed())
-
-			By("Reconciling the custom resource created")
-			namespaceLabelReconciler := &NamespaceLabelReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
-			_, err := namespaceLabelReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: namespaceLabelLookupKey})
-			Expect(err).To(Not(HaveOccurred()))
-
-			By("Ensuring Namespace management Labels still exist")
-			ensureLabelsExists(ctx, Namespace, managementLabels)
-
-			By("Ensuring NamespaceLabel's Labels were added")
-			ensureLabelsExists(ctx, Namespace, newLabels)
+			Expect(wrappedNamespace.Labels).Should(Equal(expectedLabels))
 		})
 	})
 })
-
-func init() {
-	rand.Seed(time.Now().UnixNano())
-}
-
-var letterRunes = []rune("abcdefghijklmnopqrstuvwxyz123456789")
-
-func RandStringRunes(n int) string {
-	b := make([]rune, n)
-	for i := range b {
-		b[i] = letterRunes[rand.Intn(len(letterRunes))]
-	}
-	return string(b)
-}
