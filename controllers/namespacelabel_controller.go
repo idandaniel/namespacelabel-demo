@@ -19,9 +19,9 @@ package controllers
 import (
 	"context"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/kubernetes"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -49,11 +49,10 @@ const (
 // Handles removing safely NamespaceLabels labels from the associated Namespace labels when being deleted.
 func (r *NamespaceLabelReconciler) removeLabelsFromAssociatedNamespace(ctx context.Context, namespaceLabel *idandanielv1.NamespaceLabel) error {
 	labelsToRemove := namespaceLabel.Spec.Labels
-	clientSet := kubernetes.NewForConfigOrDie(ctrl.GetConfigOrDie())
 
 	// Get all NamespaceLabels in the namespace
 	allInNamespace := &idandanielv1.NamespaceLabelList{}
-	err := r.List(ctx, allInNamespace, &client.ListOptions{Namespace: namespaceLabel.Namespace})
+	err := r.List(ctx, allInNamespace, &client.ListOptions{Namespace: namespaceLabel.GetNamespace()})
 	if client.IgnoreNotFound(err) != nil {
 		return err
 	}
@@ -62,15 +61,15 @@ func (r *NamespaceLabelReconciler) removeLabelsFromAssociatedNamespace(ctx conte
 	labelToIgnore := allInNamespace.GetLabelsExcept(namespaceLabel)
 
 	// Get the namespace to remove labels from
-	namespace, err := clientSet.CoreV1().Namespaces().Get(ctx, namespaceLabel.Namespace, metav1.GetOptions{})
-	if err != nil {
+	namespace := &corev1.Namespace{}
+	if err := r.Get(ctx, types.NamespacedName{Name: namespaceLabel.GetNamespace()}, namespace); err != nil {
 		return err
 	}
 
 	// Update the Namespace
 	wrappedNamespace := &wrappers.NamespaceWrapper{Namespace: namespace}
 	wrappedNamespace.RemoveLabelsExcept(labelsToRemove, labelToIgnore)
-	if _, err = clientSet.CoreV1().Namespaces().Update(ctx, wrappedNamespace.Namespace, metav1.UpdateOptions{}); err != nil {
+	if err := r.Update(ctx, wrappedNamespace.Namespace); err != nil {
 		return err
 	}
 
@@ -131,20 +130,16 @@ func (r *NamespaceLabelReconciler) sync(ctx context.Context, namespace string) e
 	}
 	labelsToAdd := namespaceLabelList.GetLabels()
 
-	clientSet := kubernetes.NewForConfigOrDie(ctrl.GetConfigOrDie())
-	NamespaceInterface := clientSet.CoreV1().Namespaces()
-
 	// Get the Namespace
-	n, err := NamespaceInterface.Get(ctx, namespace, metav1.GetOptions{})
-	if err != nil {
+	n := &corev1.Namespace{}
+	if err := r.Get(ctx, types.NamespacedName{Name: namespace}, n); err != nil {
 		return client.IgnoreNotFound(err)
 	}
 
 	// Update the Namespace labels safely (keeps the kubernetes managment tags)
 	wrappedNamespace := &wrappers.NamespaceWrapper{Namespace: n}
 	wrappedNamespace.UpdateLabels(true, labelsToAdd)
-	_, err = NamespaceInterface.Update(ctx, wrappedNamespace.Namespace, metav1.UpdateOptions{})
-	if err != nil {
+	if err := r.Update(ctx, wrappedNamespace.Namespace); err != nil {
 		return client.IgnoreNotFound(err)
 	}
 
@@ -166,7 +161,6 @@ func (r *NamespaceLabelReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		if err := r.addFinalizer(ctx, namespaceLabel, finalizer); err != nil {
 			return ctrl.Result{}, err
 		}
-
 	} else {
 		if err := r.handleDeletion(ctx, namespaceLabel, finalizer); err != nil {
 			return ctrl.Result{}, err
