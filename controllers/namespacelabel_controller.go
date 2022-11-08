@@ -58,6 +58,7 @@ func init() {
 //+kubebuilder:rbac:groups=idandaniel.idandaniel.io,resources=namespacelabels,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=idandaniel.idandaniel.io,resources=namespacelabels/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=idandaniel.idandaniel.io,resources=namespacelabels/finalizers,verbs=update
+//+kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;update;patch;delete
 
 // Handles removing safely NamespaceLabels labels from the associated Namespace labels when being deleted.
 func (r *NamespaceLabelReconciler) removeLabelsFromAssociatedNamespace(ctx context.Context, namespaceLabel *idandanielv1.NamespaceLabel) error {
