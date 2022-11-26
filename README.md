@@ -1,8 +1,9 @@
 # namespacelabel-demo
-// TODO(user): Add simple overview of use/purpose
+An operator for managing Namespace labels
 
 ## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+NamespaceLabel is a CRD manages Namespace labels.
+Every NamespaceLabel will sync it's labels with the Namespace's it is in while keeping management labels (*.kubernetes.io).
 
 ## Getting Started
 You’ll need a Kubernetes cluster to run against. You can use [KIND](https://sigs.k8s.io/kind) to get a local cluster for testing, or run against a remote cluster.
